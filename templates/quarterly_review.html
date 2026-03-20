@@ -1,0 +1,19 @@
+{% extends 'base.html' %}
+{% block content %}
+<h3>Quarterly Review – {{ q_label }}</h3>
+<table class="table table-hover">
+  <thead>
+    <tr><th>Ticker</th><th>Latest Update</th><th>Have {{ q_label }}?</th><th>Action</th></tr>
+  </thead>
+  <tbody>
+    {% for p, latest, has_this_q in rows %}
+    <tr class="{% if not has_this_q %}table-warning{% endif %}">
+      <td><a href="{{ url_for('position_detail', pid=p.id) }}">{{ p.ticker }}</a></td>
+      <td>{% if latest %}{{ latest.quarter_label }} ({{ latest.update_date }}){% else %}—{% endif %}</td>
+      <td>{% if has_this_q %}✅{% else %}⚠️ Missing{% endif %}</td>
+      <td><a class="btn btn-sm btn-outline-primary" href="{{ url_for('add_thesis_update', pid=p.id) }}">Add Update</a></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

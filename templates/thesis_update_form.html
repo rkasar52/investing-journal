@@ -1,0 +1,14 @@
+{% extends 'base.html' %}
+{% block content %}
+<h3>New Thesis Update for {{ position.ticker }}</h3>
+<form method="post">{{ form.csrf_token }}
+  <div class="row g-3">
+    <div class="col-md-4">{{ form.update_date.label }} {{ form.update_date(class='form-control') }}</div>
+    <div class="col-md-4">{{ form.quarter_label.label }} {{ form.quarter_label(class='form-control', placeholder='YYYY-QN') }}</div>
+    <div class="col-md-4">{{ form.rating.label }} {{ form.rating(class='form-control') }}</div>
+  </div>
+  <div class="mb-3">{{ form.action.label }} {{ form.action(class='form-select') }}</div>
+  <div class="mb-3">{{ form.update_text.label }} {{ form.update_text(class='form-control', rows=8, placeholder='What changed in the story? Earnings, moat, risks, catalysts...') }}</div>
+  <button class="btn btn-primary" type="submit">Save</button>
+</form>
+{% endblock %}

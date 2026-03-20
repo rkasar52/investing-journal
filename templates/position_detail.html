@@ -1,0 +1,38 @@
+{% extends 'base.html' %}
+{% block content %}
+<h3>{{ position.ticker }}</h3>
+<div class="row g-3 mb-4">
+  <div class="col-md-4">
+    <div class="card"><div class="card-body">
+      <div>Shares: <strong>{{ position.shares }}</strong></div>
+      <div>Buy Price: <strong>${{ '%.2f'|format(position.buy_price or 0) }}</strong></div>
+      <div>Current: <strong>${{ '%.2f'|format(position.current_price or 0) }}</strong></div>
+      <div>P/L: <strong class="{% if position.pl() >= 0 %}text-success{% else %}text-danger{% endif %}">${{ '%.2f'|format(position.pl()) }}</strong></div>
+      <div>Target: <strong>{% if position.target_price %}${{ '%.2f'|format(position.target_price) }}{% else %}-{% endif %}</strong></div>
+    </div></div>
+  </div>
+  <div class="col-md-8">
+    <div class="card"><div class="card-body">
+      <div class="small text-muted">Initial Thesis</div>
+      <div style="white-space: pre-wrap">{{ position.initial_thesis or '—' }}</div>
+    </div></div>
+  </div>
+</div>
+<div class="d-flex justify-content-between align-items-center mb-2">
+  <h5>Thesis Updates</h5>
+  <a href="{{ url_for('add_thesis_update', pid=position.id) }}" class="btn btn-sm btn-primary">Add Update</a>
+</div>
+<ul class="list-group">
+  {% for u in position.thesis_updates|sort(attribute='update_date', reverse=True) %}
+    <li class="list-group-item">
+      <div class="d-flex justify-content-between">
+        <div><strong>{{ u.quarter_label }}</strong> · {{ u.update_date }}</div>
+        <div>Price @ Update: ${{ '%.2f'|format(u.price_at_update or 0) }} · {{ u.action or '' }} {% if u.rating %}· ⭐ {{ u.rating }}{% endif %}</div>
+      </div>
+      <div style="white-space: pre-wrap">{{ u.update_text }}</div>
+    </li>
+  {% else %}
+    <li class="list-group-item">No updates yet.</li>
+  {% endfor %}
+</ul>
+{% endblock %}

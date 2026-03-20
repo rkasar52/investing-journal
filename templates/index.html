@@ -1,0 +1,29 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="row g-3">
+  <div class="col-md-3">
+    <div class="card"><div class="card-body">
+      <div class="small text-muted">Positions</div>
+      <div class="h3">{{ pos_count }}</div>
+    </div></div>
+  </div>
+  <div class="col-md-3">
+    <div class="card"><div class="card-body">
+      <div class="small text-muted">Total Cost</div>
+      <div class="h3">${{ '%.2f'|format(total_cost or 0) }}</div>
+    </div></div>
+  </div>
+  <div class="col-md-3">
+    <div class="card"><div class="card-body">
+      <div class="small text-muted">Market Value</div>
+      <div class="h3">${{ '%.2f'|format(total_value or 0) }}</div>
+    </div></div>
+  </div>
+  <div class="col-md-3">
+    <div class="card"><div class="card-body">
+      <div class="small text-muted">Unrealized P/L</div>
+      <div class="h3 {% if total_pl >= 0 %}text-success{% else %}text-danger{% endif %}">$ {{ '%.2f'|format(total_pl or 0) }}</div>
+    </div></div>
+  </div>
+</div>
+{% endblock %}

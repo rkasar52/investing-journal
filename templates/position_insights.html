@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+  <h1>Insights for {{ position.ticker }}</h1>
+
+  <h3>Investment Thesis</h3>
+  <p>{{ notes or "No thesis provided." }}</p>
+
+  <h3>Goals</h3>
+  <p>{{ goals or "No goals set." }}</p>
+
+  <h3>Advice</h3>
+  <p>{{ advice}}</p>
+
+  <a href="{{ url_for('positions_list') }}">← Back to Positions</a>
+</div>
+{% endblock %}

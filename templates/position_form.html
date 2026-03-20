@@ -1,0 +1,19 @@
+{% extends 'base.html' %}
+{% block content %}
+<h3>{{ action }} Position</h3>
+<form method="post">{{ form.csrf_token }}
+  <div class="mb-3">{{ form.ticker.label }} {{ form.ticker(class='form-control') }}</div>
+  <div class="row g-3">
+    <div class="col">{{ form.buy_date.label }} {{ form.buy_date(class='form-control') }}</div>
+    <div class="col">{{ form.buy_price.label }} {{ form.buy_price(class='form-control') }}</div>
+    <div class="col">{{ form.shares.label }} {{ form.shares(class='form-control') }}</div>
+  </div>
+  <div class="mb-3">{{ form.initial_thesis.label }} {{ form.initial_thesis(class='form-control', rows=6) }}</div>
+  <div class="row g-3">
+    <div class="col">{{ form.target_price.label }} {{ form.target_price(class='form-control') }}</div>
+    <div class="col">{{ form.target_date.label }} {{ form.target_date(class='form-control') }}</div>
+  </div>
+  <div class="mb-3">{{ form.goal_note.label }} {{ form.goal_note(class='form-control', rows=3) }}</div>
+  <button class="btn btn-primary" type="submit">Save</button>
+</form>
+{% endblock %}
