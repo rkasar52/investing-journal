@@ -40,3 +40,12 @@ export const addPositionToGroup = (gid, pid) =>
   api.post(`/review-groups/${gid}/positions`, { position_id: pid })
 export const removePositionFromGroup = (gid, pid) =>
   api.delete(`/review-groups/${gid}/positions/${pid}`)
+
+// Position notes
+export const addNote = (id, noteText) => api.post(`/positions/${id}/notes`, { note_text: noteText })
+export const deleteNote = (positionId, noteId) => api.delete(`/positions/${positionId}/notes/${noteId}`)
+
+// CSV import
+export const importCSV = (formData) => api.post('/positions/import-csv', formData, {
+  headers: { 'Content-Type': 'multipart/form-data' }
+})

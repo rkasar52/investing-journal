@@ -54,6 +54,13 @@ def refresh_news_for_position(position) -> tuple['NewsUpdate', int, int, float]:
     thesis = position.initial_thesis or ''
     goal = position.goal_note or ''
 
+    # Get recent notes for context
+    recent_notes = sorted(position.notes, key=lambda n: n.created_at, reverse=True)[:5] if hasattr(position, 'notes') else []
+    notes_text = '\n'.join(
+        f"- {n.created_at.strftime('%Y-%m-%d')}: {n.note_text}"
+        for n in recent_notes
+    ) if recent_notes else ''
+
     prompt = f"""You are an investment research assistant. Search the web for the latest news and developments about {ticker} stock from the past 7 days.
 
 Then provide a structured analysis in the following format:
@@ -64,7 +71,7 @@ Summarize the 3-5 most important recent news items, events, or developments for 
 ## Thesis Check
 My investment thesis: {thesis}
 My goal: {goal}
-
+{f'My recent notes on this stock:{chr(10)}{notes_text}{chr(10)}' if notes_text else ''}
 Based on the latest news, assess:
 - Does the news SUPPORT or CHALLENGE the thesis?
 - What is the overall sentiment (Bullish / Neutral / Bearish)?

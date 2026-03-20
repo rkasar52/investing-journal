@@ -5,7 +5,7 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 from sqlalchemy import func, select, text
 
-from models import db, Position, ThesisUpdate, NewsUpdate, ReviewGroup, Goal, DailyBrief, APIUsageLog, Setting
+from models import db, Position, ThesisUpdate, NewsUpdate, ReviewGroup, Goal, PositionNote, APIUsageLog, DailyBrief, Setting
 from services.prices import get_current_price, refresh_prices_for_all
 from services.perplexity import refresh_news_for_position, chat_with_portfolio, fetch_daily_brief
 from services.ratings import fetch_zacks_rating
@@ -124,6 +124,7 @@ def create_app():
         data = p.to_dict()
         data['thesis_updates'] = [tu.to_dict() for tu in sorted(p.thesis_updates, key=lambda u: u.update_date, reverse=True)]
         data['news_updates'] = [nu.to_dict() for nu in p.news_updates]
+        data['notes'] = [n.to_dict() for n in sorted(p.notes, key=lambda n: n.created_at, reverse=True)]
         return jsonify(data)
 
     @app.route('/api/positions/<int:pid>', methods=['PUT'])
@@ -434,6 +435,107 @@ def create_app():
         db.session.commit()
         return jsonify({'budget': budget})
 
+    # ── Position Notes ────────────────────────────────────────────────────────────
+    @app.route('/api/positions/<int:pid>/notes', methods=['POST'])
+    def add_note(pid):
+        p = db.session.get(Position, pid)
+        if not p:
+            return jsonify({'error': 'Not found'}), 404
+        data = request.get_json()
+        note = PositionNote(
+            position_id=pid,
+            note_text=data['note_text'],
+            created_at=datetime.utcnow(),
+        )
+        db.session.add(note)
+        db.session.commit()
+        return jsonify(note.to_dict()), 201
+
+    @app.route('/api/positions/<int:pid>/notes/<int:nid>', methods=['DELETE'])
+    def delete_note(pid, nid):
+        note = db.session.get(PositionNote, nid)
+        if not note or note.position_id != pid:
+            return jsonify({'error': 'Not found'}), 404
+        db.session.delete(note)
+        db.session.commit()
+        return jsonify({'deleted': nid})
+
+    # ── CSV Import ────────────────────────────────────────────────────────────────
+    @app.route('/api/positions/import-csv', methods=['POST'])
+    def import_csv():
+        import csv, io
+        file = request.files.get('file')
+        if not file:
+            return jsonify({'error': 'No file uploaded'}), 400
+
+        content = file.read().decode('utf-8-sig')  # utf-8-sig strips BOM
+        reader = csv.DictReader(io.StringIO(content))
+
+        # Normalize headers
+        raw_headers = reader.fieldnames or []
+        header_map = {h.strip().lower().replace(' ', '_'): h for h in raw_headers}
+
+        # Column detection helpers
+        def find_col(*candidates):
+            for c in candidates:
+                if c in header_map:
+                    return header_map[c]
+            return None
+
+        col_ticker   = find_col('ticker', 'symbol', 'stock_symbol', 'security', 'stock')
+        col_shares   = find_col('shares', 'quantity', 'qty', 'units', 'num_shares')
+        col_price    = find_col('buy_price', 'price', 'cost_basis_per_share', 'average_cost',
+                                'avg_price', 'purchase_price', 'cost_per_share', 'unit_cost')
+        col_date     = find_col('buy_date', 'date', 'purchase_date', 'acquired_date',
+                                'trade_date', 'acquisition_date')
+        col_thesis   = find_col('thesis', 'notes', 'initial_thesis', 'investment_thesis')
+
+        if not col_ticker:
+            return jsonify({'error': 'Could not find a ticker/symbol column. '
+                                     'Ensure your CSV has a "ticker" or "symbol" column.'}), 400
+
+        existing_tickers = {p.ticker.upper() for p in db.session.scalars(select(Position)).all()}
+
+        imported, skipped, errors = [], [], []
+
+        for row in reader:
+            raw_ticker = (row.get(col_ticker) or '').strip().upper()
+            if not raw_ticker:
+                continue
+
+            if raw_ticker in existing_tickers:
+                skipped.append(raw_ticker)
+                continue
+
+            try:
+                shares_raw = row.get(col_shares, '') if col_shares else ''
+                price_raw  = row.get(col_price, '')  if col_price  else ''
+                date_raw   = row.get(col_date, '')   if col_date   else ''
+                thesis_raw = row.get(col_thesis, '') if col_thesis else ''
+
+                # Clean numeric values (remove $, commas)
+                import re as _re
+                shares_clean = _re.sub(r'[^\d.]', '', shares_raw) if shares_raw else ''
+                price_clean  = _re.sub(r'[^\d.]', '', price_raw)  if price_raw  else ''
+
+                p = Position(
+                    ticker=raw_ticker,
+                    shares=float(shares_clean) if shares_clean else 0,
+                    buy_price=float(price_clean) if price_clean else None,
+                    buy_date=_parse_date(date_raw) if date_raw else None,
+                    initial_thesis=thesis_raw or None,
+                )
+                p.current_price, p.daily_change_pct = get_current_price(raw_ticker)
+                p.last_price_refresh = date.today()
+                db.session.add(p)
+                existing_tickers.add(raw_ticker)
+                imported.append(raw_ticker)
+            except Exception as ex:
+                errors.append({'ticker': raw_ticker, 'error': str(ex)})
+
+        db.session.commit()
+        return jsonify({'imported': imported, 'skipped': skipped, 'errors': errors})
+
     # ── Ratings ──────────────────────────────────────────────────────────────
     @app.route('/api/positions/<int:pid>/refresh-ratings', methods=['POST'])
     def refresh_ratings(pid):
@@ -515,6 +617,17 @@ def _build_portfolio_context(positions) -> str:
         if news and news.news_content:
             snippet = news.news_content.replace('\n', ' ')[:180]
             lines.append(f"{p.ticker}: {snippet}")
+
+    # Include recent notes (last 3 per position, only if any exist)
+    notes_lines = []
+    for p in sorted(positions, key=lambda x: x.ticker):
+        recent_notes = sorted(p.notes, key=lambda n: n.created_at, reverse=True)[:3]
+        for n in recent_notes:
+            date_str = n.created_at.strftime('%Y-%m-%d') if n.created_at else '?'
+            notes_lines.append(f"{p.ticker} ({date_str}): {n.note_text[:150]}")
+    if notes_lines:
+        lines += ["", "QUICK NOTES (recent investor observations):"]
+        lines += notes_lines
 
     return "\n".join(lines)
 

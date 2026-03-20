@@ -36,12 +36,20 @@ export default function Positions() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-white">All Positions ({positions.length})</h1>
-        <button
-          onClick={() => navigate('/positions/new')}
-          className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm rounded-lg"
-        >
-          + Add Position
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => navigate('/import-csv')}
+            className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 text-sm rounded-lg"
+          >
+            ↑ Import CSV
+          </button>
+          <button
+            onClick={() => navigate('/positions/new')}
+            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm rounded-lg"
+          >
+            + Add Position
+          </button>
+        </div>
       </div>
 
       <input
@@ -60,6 +68,7 @@ export default function Positions() {
               <th className="px-4 py-3">Shares</th>
               <th className="px-4 py-3">Buy Price</th>
               <th className="px-4 py-3">Current</th>
+              <th className="px-4 py-3">Today</th>
               <th className="px-4 py-3">P/L</th>
               <th className="px-4 py-3">P/L %</th>
               <th className="px-4 py-3">Market Value</th>
@@ -81,6 +90,15 @@ export default function Positions() {
                   <td className="px-4 py-3 text-slate-300">{fmt(p.buy_price)}</td>
                   <td className="px-4 py-3 text-slate-300">
                     {p.current_price ? fmt(p.current_price) : '—'}
+                  </td>
+                  <td className="px-4 py-3">
+                    {p.daily_change_pct != null ? (
+                      <span className={`text-sm font-medium ${p.daily_change_pct >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {p.daily_change_pct >= 0 ? '+' : ''}{p.daily_change_pct.toFixed(2)}%
+                      </span>
+                    ) : (
+                      <span className="text-slate-600">—</span>
+                    )}
                   </td>
                   <td className={`px-4 py-3 font-medium ${plColor}`}>
                     {fmt(p.pl)}

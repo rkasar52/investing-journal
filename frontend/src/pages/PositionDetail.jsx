@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { getPosition, refreshNews, addThesisUpdate, refreshPositionPrice, refreshRatings } from '../api/client'
+import { getPosition, refreshNews, addThesisUpdate, refreshPositionPrice, refreshRatings, addNote, deleteNote } from '../api/client'
 import ReactMarkdown from 'react-markdown'
 
 function fmt(n) {
@@ -60,6 +60,8 @@ export default function PositionDetail() {
   const [ratingsFeedback, setRatingsFeedback] = useState(null)
   const [showThesisForm, setShowThesisForm] = useState(false)
   const [thesisForm, setThesisForm] = useState({ update_text: '', rating: '', action: 'HOLD' })
+  const [noteText, setNoteText] = useState('')
+  const [noteSubmitting, setNoteSubmitting] = useState(false)
 
   const load = () => {
     getPosition(id)
@@ -99,6 +101,25 @@ export default function PositionDetail() {
     } finally {
       setPriceLoading(false)
     }
+  }
+
+  const handleAddNote = async (e) => {
+    e.preventDefault()
+    if (!noteText.trim()) return
+    setNoteSubmitting(true)
+    try {
+      await addNote(id, noteText.trim())
+      setNoteText('')
+      load()
+    } finally {
+      setNoteSubmitting(false)
+    }
+  }
+
+  const handleDeleteNote = async (noteId) => {
+    if (!confirm('Delete this note?')) return
+    await deleteNote(id, noteId)
+    load()
   }
 
   const handleAddThesis = async (e) => {
@@ -230,6 +251,50 @@ export default function PositionDetail() {
         <p className="text-slate-300 text-sm leading-relaxed whitespace-pre-wrap">
           {position.initial_thesis || 'No thesis recorded.'}
         </p>
+      </div>
+
+      {/* Quick Notes Log */}
+      <div className="space-y-3">
+        <h2 className="text-lg font-semibold text-white">Quick Notes</h2>
+
+        <form onSubmit={handleAddNote} className="flex gap-2">
+          <input
+            type="text"
+            value={noteText}
+            onChange={(e) => setNoteText(e.target.value)}
+            placeholder="Quick observation, something you heard, a reminder..."
+            className="flex-1 px-3 py-2 bg-slate-800 border border-slate-700 text-white rounded-lg text-sm focus:outline-none focus:border-indigo-500 placeholder-slate-500"
+          />
+          <button
+            type="submit"
+            disabled={noteSubmitting || !noteText.trim()}
+            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm rounded-lg disabled:opacity-50 whitespace-nowrap"
+          >
+            {noteSubmitting ? '...' : '+ Add'}
+          </button>
+        </form>
+
+        {position.notes?.length > 0 ? (
+          <div className="space-y-2">
+            {position.notes.map((n) => (
+              <div key={n.id} className="flex items-start gap-3 bg-slate-800/60 border border-slate-700/50 rounded-lg px-4 py-3">
+                <span className="text-slate-500 text-xs whitespace-nowrap mt-0.5 font-mono">
+                  {new Date(n.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                </span>
+                <p className="text-slate-300 text-sm flex-1 leading-relaxed">{n.note_text}</p>
+                <button
+                  onClick={() => handleDeleteNote(n.id)}
+                  className="text-slate-600 hover:text-red-400 text-xs transition-colors ml-2 mt-0.5"
+                  title="Delete note"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-slate-600 text-sm">No notes yet.</p>
+        )}
       </div>
 
       {/* Latest News Analysis */}

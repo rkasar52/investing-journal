@@ -53,6 +53,10 @@ class Position(db.Model):
     review_groups: Mapped[list['ReviewGroup']] = relationship(
         'ReviewGroup', secondary=review_group_positions, back_populates='positions'
     )
+    notes: Mapped[list['PositionNote']] = relationship(
+        'PositionNote', back_populates='position', cascade='all, delete-orphan',
+        order_by='PositionNote.created_at.desc()'
+    )
 
     def cost_basis(self) -> float:
         if self.buy_price and self.shares:
@@ -153,6 +157,24 @@ class NewsUpdate(db.Model):
             'news_content': self.news_content,
             'thesis_analysis': self.thesis_analysis,
             'citations': json.loads(self.citations) if self.citations else [],
+        }
+
+
+class PositionNote(db.Model):
+    __tablename__ = 'position_notes'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    position_id: Mapped[int] = mapped_column(ForeignKey('positions.id'), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    note_text: Mapped[str] = mapped_column(Text)
+
+    position: Mapped['Position'] = relationship('Position', back_populates='notes')
+
+    def to_dict(self) -> dict:
+        return {
+            'id': self.id,
+            'position_id': self.position_id,
+            'created_at': self.created_at.isoformat(),
+            'note_text': self.note_text,
         }
 
 

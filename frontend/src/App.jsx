@@ -7,6 +7,7 @@ import PositionForm from './pages/PositionForm'
 import ReviewQueue from './pages/ReviewQueue'
 import GroupReview from './pages/GroupReview'
 import Chat from './pages/Chat'
+import ImportCSV from './pages/ImportCSV'
 
 export default function App() {
   return (
@@ -21,6 +22,7 @@ export default function App() {
           <Route path="review" element={<ReviewQueue />} />
           <Route path="review/:groupId" element={<GroupReview />} />
           <Route path="chat" element={<Chat />} />
+          <Route path="import-csv" element={<ImportCSV />} />
         </Route>
       </Routes>
     </BrowserRouter>
