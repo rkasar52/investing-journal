@@ -26,6 +26,7 @@ class Position(db.Model):
 
     target_price: Mapped[float] = mapped_column(Float, nullable=True)
     target_date: Mapped[datetime] = mapped_column(Date, nullable=True)
+    retirement_hold: Mapped[bool] = mapped_column(Integer, default=0, nullable=True)
     goal_note: Mapped[str] = mapped_column(Text, nullable=True)
 
     current_price: Mapped[float] = mapped_column(Float, nullable=True)
@@ -34,11 +35,15 @@ class Position(db.Model):
 
     # Analyst ratings
     zacks_rating: Mapped[str] = mapped_column(String(32), nullable=True)
+    zacks_notes: Mapped[str] = mapped_column(Text, nullable=True)
     wsz_rating: Mapped[str] = mapped_column(String(32), nullable=True)
+    wsz_notes: Mapped[str] = mapped_column(Text, nullable=True)
     motley_fool_rating: Mapped[str] = mapped_column(String(32), nullable=True)
+    motley_fool_notes: Mapped[str] = mapped_column(Text, nullable=True)
     ratings_updated: Mapped[datetime] = mapped_column(DateTime, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(Date, default=datetime.utcnow)
+    is_watchlist: Mapped[bool] = mapped_column(db.Boolean, default=False, nullable=False, server_default='0')
 
     thesis_updates: Mapped[list['ThesisUpdate']] = relationship(
         'ThesisUpdate', back_populates='position', cascade='all, delete-orphan'
@@ -94,6 +99,7 @@ class Position(db.Model):
             'initial_thesis': self.initial_thesis,
             'target_price': self.target_price,
             'target_date': self.target_date.isoformat() if self.target_date else None,
+            'retirement_hold': bool(self.retirement_hold),
             'goal_note': self.goal_note,
             'current_price': self.current_price,
             'last_price_refresh': self.last_price_refresh.isoformat() if self.last_price_refresh else None,
@@ -105,9 +111,13 @@ class Position(db.Model):
             'daily_change_pct': self.daily_change_pct,
             'last_news_refresh': latest_news.created_at.isoformat() if latest_news else None,
             'zacks_rating': self.zacks_rating,
+            'zacks_notes': self.zacks_notes,
             'wsz_rating': self.wsz_rating,
+            'wsz_notes': self.wsz_notes,
             'motley_fool_rating': self.motley_fool_rating,
+            'motley_fool_notes': self.motley_fool_notes,
             'ratings_updated': self.ratings_updated.isoformat() if self.ratings_updated else None,
+            'is_watchlist': self.is_watchlist,
         }
 
 

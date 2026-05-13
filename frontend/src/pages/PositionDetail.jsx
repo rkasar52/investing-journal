@@ -1,11 +1,114 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { getPosition, refreshNews, addThesisUpdate, refreshPositionPrice, refreshRatings, addNote, deleteNote } from '../api/client'
+import { getPosition, refreshNews, addThesisUpdate, refreshPositionPrice, refreshRatings, addNote, deleteNote, moveToPortfolio, positionChat, researchGoal } from '../api/client'
 import ReactMarkdown from 'react-markdown'
 
 function fmt(n) {
   if (n == null) return '—'
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n)
+}
+
+function NewsChat({ positionId }) {
+  const [open, setOpen] = useState(false)
+  const [messages, setMessages] = useState([])
+  const [input, setInput] = useState('')
+  const [sending, setSending] = useState(false)
+  const bottomRef = useRef(null)
+
+  useEffect(() => {
+    if (open) bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages, open])
+
+  const send = async (e) => {
+    e.preventDefault()
+    if (!input.trim() || sending) return
+    const userMsg = { role: 'user', content: input.trim() }
+    setMessages((m) => [...m, userMsg])
+    setInput('')
+    setSending(true)
+    try {
+      const res = await positionChat(positionId, userMsg.content, messages)
+      setMessages((m) => [...m, { role: 'assistant', content: res.data.reply }])
+    } catch {
+      setMessages((m) => [...m, { role: 'assistant', content: 'Sorry, something went wrong. Try again.' }])
+    } finally {
+      setSending(false)
+    }
+  }
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="mt-3 flex items-center gap-2 px-3 py-1.5 text-xs text-indigo-400 hover:text-indigo-300 border border-indigo-700/50 hover:border-indigo-500 rounded-lg transition-colors w-fit"
+      >
+        <span>💬</span> Chat about this analysis
+      </button>
+    )
+  }
+
+  return (
+    <div className="mt-4 border border-indigo-700/40 rounded-xl overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-2 bg-indigo-950/40 border-b border-indigo-700/40">
+        <span className="text-indigo-300 text-xs font-medium">💬 Chat about this analysis</span>
+        <button
+          onClick={() => setOpen(false)}
+          className="text-slate-500 hover:text-slate-300 text-xs"
+        >
+          close
+        </button>
+      </div>
+
+      {/* Message thread */}
+      <div className="max-h-80 overflow-y-auto p-4 space-y-3 bg-slate-900/40">
+        {messages.length === 0 && (
+          <p className="text-slate-500 text-xs text-center py-4">
+            Ask a follow-up question about the news or thesis above...
+          </p>
+        )}
+        {messages.map((msg, i) => (
+          <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+            <div className={`max-w-[85%] px-3 py-2 rounded-xl text-sm ${
+              msg.role === 'user'
+                ? 'bg-indigo-600 text-white'
+                : 'bg-slate-800 text-slate-200 border border-slate-700'
+            }`}>
+              <div className="prose prose-sm prose-invert max-w-none">
+                <ReactMarkdown>{msg.content}</ReactMarkdown>
+              </div>
+            </div>
+          </div>
+        ))}
+        {sending && (
+          <div className="flex justify-start">
+            <div className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl">
+              <span className="text-slate-500 text-xs animate-pulse">Thinking...</span>
+            </div>
+          </div>
+        )}
+        <div ref={bottomRef} />
+      </div>
+
+      {/* Input */}
+      <form onSubmit={send} className="flex gap-2 p-3 border-t border-slate-700/50 bg-slate-900/20">
+        <input
+          type="text"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder="Ask a follow-up..."
+          disabled={sending}
+          className="flex-1 px-3 py-2 bg-slate-800 border border-slate-700 text-white rounded-lg text-sm focus:outline-none focus:border-indigo-500 placeholder-slate-500 disabled:opacity-50"
+        />
+        <button
+          type="submit"
+          disabled={!input.trim() || sending}
+          className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm rounded-lg disabled:opacity-50 transition-colors"
+        >
+          Send
+        </button>
+      </form>
+    </div>
+  )
 }
 
 const RATING_COLORS = {
@@ -26,17 +129,20 @@ const RATING_COLORS = {
   'Not Recommended':  'bg-red-900/40 text-red-400 border-red-800',
 }
 
-function RatingBadge({ label, value }) {
+function RatingBadge({ label, value, notes }) {
   const colorClass = value ? (RATING_COLORS[value] || 'bg-slate-700 text-slate-300 border-slate-600') : ''
   return (
-    <div className="flex flex-col gap-1">
+    <div className="flex flex-col gap-1.5">
       <span className="text-slate-500 text-xs">{label}</span>
       {value ? (
-        <span className={`inline-block px-2.5 py-1 text-xs font-medium rounded-md border ${colorClass}`}>
+        <span className={`inline-block px-2.5 py-1 text-xs font-medium rounded-md border w-fit ${colorClass}`}>
           {value}
         </span>
       ) : (
         <span className="text-slate-600 text-xs italic">Not set</span>
+      )}
+      {notes && (
+        <p className="text-slate-400 text-xs leading-relaxed">{notes}</p>
       )}
     </div>
   )
@@ -62,6 +168,11 @@ export default function PositionDetail() {
   const [thesisForm, setThesisForm] = useState({ update_text: '', rating: '', action: 'HOLD' })
   const [noteText, setNoteText] = useState('')
   const [noteSubmitting, setNoteSubmitting] = useState(false)
+  const [showMoveModal, setShowMoveModal] = useState(false)
+  const [moveForm, setMoveForm] = useState({ buy_price: '', shares: '', buy_date: new Date().toISOString().split('T')[0] })
+  const [moveLoading, setMoveLoading] = useState(false)
+  const [goalResearch, setGoalResearch] = useState(null)
+  const [goalResearching, setGoalResearching] = useState(false)
 
   const load = () => {
     getPosition(id)
@@ -103,6 +214,19 @@ export default function PositionDetail() {
     }
   }
 
+  const handleResearchGoal = async () => {
+    setGoalResearching(true)
+    setGoalResearch(null)
+    try {
+      const res = await researchGoal(id)
+      setGoalResearch(res.data.research)
+    } catch {
+      setGoalResearch('Failed to fetch research. Try again.')
+    } finally {
+      setGoalResearching(false)
+    }
+  }
+
   const handleAddNote = async (e) => {
     e.preventDefault()
     if (!noteText.trim()) return
@@ -120,6 +244,21 @@ export default function PositionDetail() {
     if (!confirm('Delete this note?')) return
     await deleteNote(id, noteId)
     load()
+  }
+
+  const handleMoveToPortfolio = async (e) => {
+    e.preventDefault()
+    setMoveLoading(true)
+    try {
+      await moveToPortfolio(id, {
+        buy_price: parseFloat(moveForm.buy_price),
+        shares: parseFloat(moveForm.shares),
+        buy_date: moveForm.buy_date,
+      })
+      navigate('/positions')
+    } finally {
+      setMoveLoading(false)
+    }
   }
 
   const handleAddThesis = async (e) => {
@@ -147,7 +286,14 @@ export default function PositionDetail() {
           <button onClick={() => navigate('/positions')} className="text-slate-500 hover:text-slate-300 text-sm mb-2 block">
             ← All Positions
           </button>
-          <h1 className="text-3xl font-bold text-white font-mono">{position.ticker}</h1>
+          <h1 className="text-3xl font-bold text-white font-mono">
+            {position.ticker}
+            {position.is_watchlist && (
+              <span className="ml-3 px-2 py-0.5 text-xs bg-amber-900/40 text-amber-400 border border-amber-700 rounded-full align-middle">
+                Watchlist
+              </span>
+            )}
+          </h1>
         </div>
         <div className="flex gap-2">
           <button
@@ -170,6 +316,14 @@ export default function PositionDetail() {
           >
             Edit
           </button>
+          {position.is_watchlist && (
+            <button
+              onClick={() => setShowMoveModal(true)}
+              className="px-4 py-2 text-sm bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg"
+            >
+              ✓ Move to Portfolio
+            </button>
+          )}
         </div>
       </div>
 
@@ -193,17 +347,63 @@ export default function PositionDetail() {
       </div>
 
       {/* Target */}
-      {(position.target_price || position.goal_note) && (
+      {(position.target_price || position.goal_note || position.retirement_hold) && (
         <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
           <p className="text-slate-400 text-xs uppercase tracking-wider mb-2">Target & Goals</p>
+          {position.retirement_hold && (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-indigo-900/40 border border-indigo-700/50 text-indigo-300 text-xs rounded-full mb-2">
+              🏖 Retirement Hold
+            </span>
+          )}
           {position.target_price && (
             <p className="text-slate-300 text-sm">
               Target Price: <span className="text-white font-medium">{fmt(position.target_price)}</span>
-              {position.target_date && ` by ${position.target_date}`}
+              {!position.retirement_hold && position.target_date && ` by ${position.target_date}`}
             </p>
           )}
           {position.goal_note && (
             <p className="text-slate-400 text-sm mt-1">{position.goal_note}</p>
+          )}
+        </div>
+      )}
+
+      {/* No-goal research panel */}
+      {!position.retirement_hold && !position.target_price && !position.goal_note && (
+        <div className="bg-slate-800/60 border border-dashed border-slate-600 rounded-xl p-5">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-slate-300 text-sm font-medium">No goal set for this position</p>
+              <p className="text-slate-500 text-xs mt-0.5">
+                Not sure what you're holding for? Get AI research on analyst targets,
+                long-term growth drivers, and a suggested exit framework.
+              </p>
+            </div>
+            <button
+              onClick={handleResearchGoal}
+              disabled={goalResearching}
+              className="shrink-0 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm rounded-lg disabled:opacity-50 transition-colors"
+            >
+              {goalResearching ? 'Researching...' : '🔍 Research my goal'}
+            </button>
+          </div>
+
+          {goalResearch && (
+            <div className="mt-4 pt-4 border-t border-slate-700">
+              <div className="prose prose-sm prose-invert max-w-none text-slate-300">
+                <ReactMarkdown>{goalResearch}</ReactMarkdown>
+              </div>
+              <div className="mt-4 pt-3 border-t border-slate-700 flex items-center gap-3">
+                <p className="text-slate-500 text-xs flex-1">
+                  Use this to set your target price and goal below.
+                </p>
+                <button
+                  onClick={() => navigate(`/positions/${id}/edit`)}
+                  className="px-4 py-1.5 text-xs bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors"
+                >
+                  Set my goal →
+                </button>
+              </div>
+            </div>
           )}
         </div>
       )}
@@ -233,9 +433,9 @@ export default function PositionDetail() {
         </div>
 
         <div className="grid grid-cols-3 gap-4">
-          <RatingBadge label="Zacks" value={position.zacks_rating} />
-          <RatingBadge label="Wall Street Zen" value={position.wsz_rating} />
-          <RatingBadge label="Motley Fool" value={position.motley_fool_rating} />
+          <RatingBadge label="Zacks" value={position.zacks_rating} notes={position.zacks_notes} />
+          <RatingBadge label="Wall Street Zen" value={position.wsz_rating} notes={position.wsz_notes} />
+          <RatingBadge label="Motley Fool" value={position.motley_fool_rating} notes={position.motley_fool_notes} />
         </div>
 
         {position.ratings_updated && (
@@ -339,6 +539,8 @@ export default function PositionDetail() {
                     })}
                   </div>
                 )}
+                {/* Inline chat about this news */}
+                <NewsChat positionId={id} />
               </div>
             </div>
           ))}
@@ -436,6 +638,48 @@ export default function PositionDetail() {
           <div className="text-slate-500 text-sm py-4">No thesis updates yet.</div>
         )}
       </div>
+
+      {/* Move to Portfolio Modal */}
+      {showMoveModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-slate-700 rounded-xl p-6 w-full max-w-sm space-y-4">
+            <h2 className="text-white font-semibold text-lg">Move to Portfolio</h2>
+            <p className="text-slate-400 text-sm">Enter your purchase details to move {position.ticker} to your active portfolio.</p>
+            <form onSubmit={handleMoveToPortfolio} className="space-y-4">
+              <div>
+                <label className="block text-slate-400 text-xs uppercase tracking-wider mb-1">Buy Price ($) *</label>
+                <input required type="number" step="0.01" placeholder="150.00"
+                  value={moveForm.buy_price}
+                  onChange={(e) => setMoveForm(f => ({ ...f, buy_price: e.target.value }))}
+                  className="w-full px-3 py-2 bg-slate-700 border border-slate-600 text-white rounded-lg text-sm focus:outline-none focus:border-indigo-500" />
+              </div>
+              <div>
+                <label className="block text-slate-400 text-xs uppercase tracking-wider mb-1">Shares *</label>
+                <input required type="number" step="0.001" placeholder="10"
+                  value={moveForm.shares}
+                  onChange={(e) => setMoveForm(f => ({ ...f, shares: e.target.value }))}
+                  className="w-full px-3 py-2 bg-slate-700 border border-slate-600 text-white rounded-lg text-sm focus:outline-none focus:border-indigo-500" />
+              </div>
+              <div>
+                <label className="block text-slate-400 text-xs uppercase tracking-wider mb-1">Buy Date</label>
+                <input type="date" value={moveForm.buy_date}
+                  onChange={(e) => setMoveForm(f => ({ ...f, buy_date: e.target.value }))}
+                  className="w-full px-3 py-2 bg-slate-700 border border-slate-600 text-white rounded-lg text-sm focus:outline-none focus:border-indigo-500" />
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button type="submit" disabled={moveLoading}
+                  className="flex-1 py-2 bg-emerald-700 hover:bg-emerald-600 text-white text-sm font-medium rounded-lg disabled:opacity-50">
+                  {moveLoading ? 'Moving...' : 'Confirm Purchase'}
+                </button>
+                <button type="button" onClick={() => setShowMoveModal(false)}
+                  className="flex-1 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 text-sm rounded-lg">
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -15,10 +15,14 @@ export default function PositionForm() {
     initial_thesis: '',
     target_price: '',
     target_date: '',
+    retirement_hold: false,
     goal_note: '',
     zacks_rating: '',
+    zacks_notes: '',
     wsz_rating: '',
+    wsz_notes: '',
     motley_fool_rating: '',
+    motley_fool_notes: '',
   })
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -37,10 +41,14 @@ export default function PositionForm() {
             initial_thesis: p.initial_thesis || '',
             target_price: p.target_price ?? '',
             target_date: p.target_date || '',
+            retirement_hold: p.retirement_hold || false,
             goal_note: p.goal_note || '',
             zacks_rating: p.zacks_rating || '',
+            zacks_notes: p.zacks_notes || '',
             wsz_rating: p.wsz_rating || '',
+            wsz_notes: p.wsz_notes || '',
             motley_fool_rating: p.motley_fool_rating || '',
+            motley_fool_notes: p.motley_fool_notes || '',
           })
         })
         .finally(() => setLoading(false))
@@ -60,11 +68,15 @@ export default function PositionForm() {
         shares: form.shares ? parseFloat(form.shares) : 0,
         initial_thesis: form.initial_thesis || null,
         target_price: form.target_price ? parseFloat(form.target_price) : null,
-        target_date: form.target_date || null,
+        target_date: form.retirement_hold ? null : (form.target_date || null),
+        retirement_hold: form.retirement_hold,
         goal_note: form.goal_note || null,
         zacks_rating: form.zacks_rating || null,
+        zacks_notes: form.zacks_notes || null,
         wsz_rating: form.wsz_rating || null,
+        wsz_notes: form.wsz_notes || null,
         motley_fool_rating: form.motley_fool_rating || null,
+        motley_fool_notes: form.motley_fool_notes || null,
       }
       if (isEdit) {
         await updatePosition(id, payload)
@@ -172,6 +184,25 @@ export default function PositionForm() {
         {/* Target & Goals */}
         <div className="bg-slate-800 border border-slate-700 rounded-xl p-5 space-y-4">
           <h2 className="text-slate-300 font-medium text-sm uppercase tracking-wider">Target & Goals</h2>
+
+          {/* Retirement toggle */}
+          <label className="flex items-center gap-3 cursor-pointer group w-fit">
+            <div className="relative">
+              <input
+                type="checkbox"
+                className="sr-only"
+                checked={form.retirement_hold}
+                onChange={(e) => setForm((f) => ({ ...f, retirement_hold: e.target.checked, target_date: '' }))}
+              />
+              <div className={`w-10 h-6 rounded-full transition-colors ${form.retirement_hold ? 'bg-indigo-600' : 'bg-slate-600'}`} />
+              <div className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform ${form.retirement_hold ? 'translate-x-4' : ''}`} />
+            </div>
+            <div>
+              <span className="text-slate-300 text-sm font-medium">Retirement Hold</span>
+              <p className="text-slate-500 text-xs">Long-term position — no target date needed</p>
+            </div>
+          </label>
+
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className={labelClass}>Target Price ($)</label>
@@ -186,12 +217,18 @@ export default function PositionForm() {
             </div>
             <div>
               <label className={labelClass}>Target Date</label>
-              <input
-                type="date"
-                value={form.target_date}
-                onChange={set('target_date')}
-                className={inputClass}
-              />
+              {form.retirement_hold ? (
+                <div className="px-3 py-2 bg-indigo-900/30 border border-indigo-700/50 text-indigo-300 rounded-lg text-sm">
+                  🏖 Retirement hold — no date set
+                </div>
+              ) : (
+                <input
+                  type="date"
+                  value={form.target_date}
+                  onChange={set('target_date')}
+                  className={inputClass}
+                />
+              )}
             </div>
           </div>
           <div>
@@ -213,14 +250,11 @@ export default function PositionForm() {
             <p className="text-slate-500 text-xs mt-0.5">Enter manually — Zacks can also be auto-fetched from the position detail page.</p>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <div>
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
+            {/* Zacks */}
+            <div className="space-y-2">
               <label className={labelClass}>Zacks Rank</label>
-              <select
-                value={form.zacks_rating}
-                onChange={set('zacks_rating')}
-                className={inputClass}
-              >
+              <select value={form.zacks_rating} onChange={set('zacks_rating')} className={inputClass}>
                 <option value="">— Not set —</option>
                 <option value="Strong Buy">Strong Buy (1)</option>
                 <option value="Buy">Buy (2)</option>
@@ -228,15 +262,19 @@ export default function PositionForm() {
                 <option value="Sell">Sell (4)</option>
                 <option value="Strong Sell">Strong Sell (5)</option>
               </select>
+              <textarea
+                rows={2}
+                value={form.zacks_notes}
+                onChange={set('zacks_notes')}
+                placeholder="Why you agree / disagree with this rating..."
+                className={inputClass + ' resize-none text-xs'}
+              />
             </div>
 
-            <div>
+            {/* Wall Street Zen */}
+            <div className="space-y-2">
               <label className={labelClass}>Wall Street Zen</label>
-              <select
-                value={form.wsz_rating}
-                onChange={set('wsz_rating')}
-                className={inputClass}
-              >
+              <select value={form.wsz_rating} onChange={set('wsz_rating')} className={inputClass}>
                 <option value="">— Not set —</option>
                 <option value="Very Bullish">Very Bullish</option>
                 <option value="Bullish">Bullish</option>
@@ -244,15 +282,19 @@ export default function PositionForm() {
                 <option value="Bearish">Bearish</option>
                 <option value="Very Bearish">Very Bearish</option>
               </select>
+              <textarea
+                rows={2}
+                value={form.wsz_notes}
+                onChange={set('wsz_notes')}
+                placeholder="Your take on this rating..."
+                className={inputClass + ' resize-none text-xs'}
+              />
             </div>
 
-            <div>
+            {/* Motley Fool */}
+            <div className="space-y-2">
               <label className={labelClass}>Motley Fool (Radio)</label>
-              <select
-                value={form.motley_fool_rating}
-                onChange={set('motley_fool_rating')}
-                className={inputClass}
-              >
+              <select value={form.motley_fool_rating} onChange={set('motley_fool_rating')} className={inputClass}>
                 <option value="">— Not set —</option>
                 <option value="Stock Advisor Buy">Stock Advisor Buy</option>
                 <option value="Rule Breakers Buy">Rule Breakers Buy</option>
@@ -260,6 +302,13 @@ export default function PositionForm() {
                 <option value="Watch">Watch</option>
                 <option value="Not Recommended">Not Recommended</option>
               </select>
+              <textarea
+                rows={2}
+                value={form.motley_fool_notes}
+                onChange={set('motley_fool_notes')}
+                placeholder="What they said on the show, episode notes..."
+                className={inputClass + ' resize-none text-xs'}
+              />
             </div>
           </div>
         </div>

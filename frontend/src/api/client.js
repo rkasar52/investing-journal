@@ -13,6 +13,8 @@ export const deletePosition = (id) => api.delete(`/positions/${id}`)
 export const refreshPositionPrice = (id) => api.post(`/positions/${id}/refresh-price`)
 export const refreshNews = (id) => api.post(`/positions/${id}/refresh-news`)
 export const refreshRatings = (id) => api.post(`/positions/${id}/refresh-ratings`)
+export const positionChat = (id, message, history) => api.post(`/positions/${id}/chat`, { message, history })
+export const researchGoal = (id) => api.post(`/positions/${id}/research-goal`)
 export const addThesisUpdate = (id, data) => api.post(`/positions/${id}/thesis-updates`, data)
 
 // Prices
@@ -31,6 +33,7 @@ export const updateBudget = (budget) => api.put('/usage/budget', { budget })
 
 // Review groups
 export const getReviewGroups = () => api.get('/review-groups')
+export const getReviewGroupsWithPositions = () => api.get('/review-groups?with_positions=1')
 export const getReviewGroup = (id) => api.get(`/review-groups/${id}`)
 export const createReviewGroup = (data) => api.post('/review-groups', data)
 export const updateReviewGroup = (id, data) => api.put(`/review-groups/${id}`, data)
@@ -49,3 +52,8 @@ export const deleteNote = (positionId, noteId) => api.delete(`/positions/${posit
 export const importCSV = (formData) => api.post('/positions/import-csv', formData, {
   headers: { 'Content-Type': 'multipart/form-data' }
 })
+
+// Watchlist
+export const getWatchlist = () => api.get('/watchlist')
+export const createWatchlistItem = (data) => api.post('/watchlist', data)
+export const moveToPortfolio = (id, data) => api.post(`/positions/${id}/move-to-portfolio`, data)

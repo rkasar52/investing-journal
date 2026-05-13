@@ -61,26 +61,39 @@ def refresh_news_for_position(position) -> tuple['NewsUpdate', int, int, float]:
         for n in recent_notes
     ) if recent_notes else ''
 
-    prompt = f"""You are an investment research assistant. Search the web for the latest news and developments about {ticker} stock from the past 7 days.
+    # Build analyst rating context
+    rating_parts = []
+    if getattr(position, 'zacks_rating', None):
+        note = f" ({position.zacks_notes})" if getattr(position, 'zacks_notes', None) else ''
+        rating_parts.append(f"Zacks: {position.zacks_rating}{note}")
+    if getattr(position, 'wsz_rating', None):
+        note = f" ({position.wsz_notes})" if getattr(position, 'wsz_notes', None) else ''
+        rating_parts.append(f"Wall Street Zen: {position.wsz_rating}{note}")
+    if getattr(position, 'motley_fool_rating', None):
+        note = f" ({position.motley_fool_notes})" if getattr(position, 'motley_fool_notes', None) else ''
+        rating_parts.append(f"Motley Fool: {position.motley_fool_rating}{note}")
+    ratings_text = ' | '.join(rating_parts) if rating_parts else ''
 
-Then provide a structured analysis in the following format:
+    prompt = f"""You are an investment research assistant. Search the web for recent news and developments about {ticker} stock.
+
+IMPORTANT: Always provide a complete analysis using whatever information you can find. If recent news is limited, use the most recent available information, sector trends, or known company context. Never refuse or say results are insufficient — just work with what's available and note any limitations briefly.
 
 ## Latest News Summary
-Summarize the 3-5 most important recent news items, events, or developments for {ticker}. Include earnings, analyst actions, product launches, regulatory news, or macro factors affecting this stock.
+Search for and summarize the most important recent news for {ticker}. Include anything relevant: earnings, analyst actions, product/regulatory news, competitive developments, macro factors. If news is sparse, summarize the general recent situation and sector context.
 
 ## Thesis Check
-My investment thesis: {thesis}
-My goal: {goal}
-{f'My recent notes on this stock:{chr(10)}{notes_text}{chr(10)}' if notes_text else ''}
-Based on the latest news, assess:
-- Does the news SUPPORT or CHALLENGE the thesis?
-- What is the overall sentiment (Bullish / Neutral / Bearish)?
-- Are there any red flags or catalysts I should act on?
+My investment thesis: {thesis if thesis else 'No thesis recorded yet.'}
+My goal: {goal if goal else 'No specific goal set.'}
+{f'My analyst ratings: {ratings_text}{chr(10)}' if ratings_text else ''}{f'My recent notes:{chr(10)}{notes_text}{chr(10)}' if notes_text else ''}
+Based on what you found:
+- Does the recent news SUPPORT or CHALLENGE this thesis?
+- Overall sentiment: Bullish / Neutral / Bearish?
+- Any red flags or catalysts worth acting on?
 
 ## Action Suggestion
-Based on the current news and thesis, what action do you recommend: HOLD / ADD / TRIM / WATCH CLOSELY? Give a 1-2 sentence rationale.
+Recommended action: HOLD / ADD / TRIM / WATCH CLOSELY — with a 1-2 sentence rationale.
 
-Be concise and direct. Focus on what matters for an investor's decision."""
+Be direct and concise. Always complete all three sections."""
 
     payload = {
         'model': 'sonar-pro',
@@ -109,6 +122,120 @@ Be concise and direct. Focus on what matters for an investor's decision."""
     )
 
     return news_update, pt, ct, cost
+
+
+def research_goal_for_position(position) -> tuple[str, int, int, float]:
+    """
+    Research a stock to help the investor set a long-term goal and target price.
+    Returns (research_text, prompt_tokens, completion_tokens, estimated_cost).
+    """
+    ticker = position.ticker
+    thesis = position.initial_thesis or ''
+    current_price = position.current_price or 0
+    buy_price = position.buy_price or 0
+
+    prompt = f"""You are an investment research analyst. I own {ticker} stock and need help setting a long-term investment goal and target price.
+
+Current situation:
+- My buy price: ${buy_price:.2f}
+- Current price: ${current_price:.2f}
+- My investment thesis: {thesis if thesis else 'Not yet defined.'}
+
+Please research {ticker} and provide the following:
+
+## Analyst Price Targets
+What are current Wall Street analyst price targets for {ticker}? Include the range (low / average / high) and consensus rating if available.
+
+## Long-Term Growth Case
+What are the 2-3 strongest long-term growth drivers for {ticker} over the next 3-5 years? Be specific to this company.
+
+## Key Risks to the Thesis
+What are the 2-3 biggest risks that could prevent {ticker} from reaching its potential?
+
+## Suggested Goal Framework
+Based on the above, suggest:
+- A **conservative target price** (realistic base case, 2-3 years)
+- An **optimistic target price** (bull case if growth drivers play out)
+- A **suggested exit trigger** — what specific event or condition should prompt a sell decision?
+
+Be direct and specific. Use real analyst data where available. This is to help me set a concrete goal, not a generic overview."""
+
+    payload = {
+        'model': 'sonar-pro',
+        'messages': [
+            {'role': 'system', 'content': 'You are a professional equity research analyst. Be specific, data-driven, and direct. Always complete all sections even if data is limited — use your best judgment.'},
+            {'role': 'user', 'content': prompt},
+        ],
+        'temperature': 0.2,
+        'max_tokens': 1500,
+    }
+
+    result, pt, ct, cost = _call(payload)
+    content = result['choices'][0]['message']['content']
+    return content, pt, ct, cost
+
+
+def chat_about_position(position, news_update, message: str, history: list) -> tuple[str, int, int, float]:
+    """
+    Chat about a specific position, with its thesis and latest news as context.
+    Returns (reply_text, prompt_tokens, completion_tokens, estimated_cost).
+    """
+    ticker = position.ticker
+
+    # Build position-specific context
+    rating_parts = []
+    for src, rating, notes in [
+        ('Zacks', getattr(position, 'zacks_rating', None), getattr(position, 'zacks_notes', None)),
+        ('Wall Street Zen', getattr(position, 'wsz_rating', None), getattr(position, 'wsz_notes', None)),
+        ('Motley Fool', getattr(position, 'motley_fool_rating', None), getattr(position, 'motley_fool_notes', None)),
+    ]:
+        if rating:
+            note_str = f' ({notes})' if notes else ''
+            rating_parts.append(f'{src}: {rating}{note_str}')
+
+    context_parts = [
+        f"STOCK: {ticker}",
+        f"Shares: {position.shares} | Buy price: ${position.buy_price or 0:.2f} | "
+        f"Current: ${position.current_price or 0:.2f} | "
+        f"P/L: {position.pl_pct():+.1f}%",
+    ]
+    if position.initial_thesis:
+        context_parts.append(f"\nINVESTMENT THESIS:\n{position.initial_thesis}")
+    if position.goal_note:
+        context_parts.append(f"\nGOAL / EXIT CRITERIA:\n{position.goal_note}")
+    if rating_parts:
+        context_parts.append(f"\nANALYST RATINGS: {' | '.join(rating_parts)}")
+    if getattr(position, 'retirement_hold', False):
+        context_parts.append("\nHORIZON: Long-term retirement hold")
+
+    if news_update:
+        context_parts.append(f"\nLATEST NEWS ANALYSIS (fetched {news_update.created_at.strftime('%Y-%m-%d')}):")
+        if news_update.news_content:
+            context_parts.append(news_update.news_content)
+        if news_update.thesis_analysis:
+            context_parts.append(news_update.thesis_analysis)
+
+    system_prompt = (
+        f"You are a personal investment advisor helping an investor think through their {ticker} position. "
+        f"You have full context on this stock below. Answer questions directly and practically. "
+        f"Be concise — the investor wants actionable insight, not lengthy disclaimers.\n\n"
+        + '\n'.join(context_parts)
+    )
+
+    messages = [{'role': 'system', 'content': system_prompt}]
+    for msg in history[-10:]:
+        messages.append({'role': msg['role'], 'content': msg['content']})
+    messages.append({'role': 'user', 'content': message})
+
+    payload = {
+        'model': 'sonar-pro',
+        'messages': messages,
+        'temperature': 0.3,
+        'max_tokens': 1024,
+    }
+
+    result, pt, ct, cost = _call(payload)
+    return result['choices'][0]['message']['content'], pt, ct, cost
 
 
 def chat_with_portfolio(message: str, history: list, portfolio_context: str) -> tuple[str, int, int, float]:

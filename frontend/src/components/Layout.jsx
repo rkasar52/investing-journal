@@ -79,6 +79,7 @@ export default function Layout() {
           </button>
           <NavLink to="/" end className={navClass}>Dashboard</NavLink>
           <NavLink to="/positions" className={navClass}>Positions</NavLink>
+          <NavLink to="/watchlist" className={navClass}>👁 Watchlist</NavLink>
           <NavLink to="/review" className={navClass}>Review Queue</NavLink>
           <NavLink to="/chat" className={navClass}>💬 Chat</NavLink>
 

@@ -8,6 +8,8 @@ import ReviewQueue from './pages/ReviewQueue'
 import GroupReview from './pages/GroupReview'
 import Chat from './pages/Chat'
 import ImportCSV from './pages/ImportCSV'
+import Watchlist from './pages/Watchlist'
+import WatchlistForm from './pages/WatchlistForm'
 
 export default function App() {
   return (
@@ -23,6 +25,8 @@ export default function App() {
           <Route path="review/:groupId" element={<GroupReview />} />
           <Route path="chat" element={<Chat />} />
           <Route path="import-csv" element={<ImportCSV />} />
+          <Route path="watchlist" element={<Watchlist />} />
+          <Route path="watchlist/new" element={<WatchlistForm />} />
         </Route>
       </Routes>
     </BrowserRouter>

@@ -7,7 +7,7 @@ from sqlalchemy import func, select, text
 
 from models import db, Position, ThesisUpdate, NewsUpdate, ReviewGroup, Goal, PositionNote, APIUsageLog, DailyBrief, Setting
 from services.prices import get_current_price, refresh_prices_for_all
-from services.perplexity import refresh_news_for_position, chat_with_portfolio, fetch_daily_brief
+from services.perplexity import refresh_news_for_position, chat_with_portfolio, chat_about_position, research_goal_for_position, fetch_daily_brief
 from services.ratings import fetch_zacks_rating
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -69,6 +69,25 @@ def create_app():
         daily_winners = [p.to_dict() for p in sorted_daily[:5] if p.daily_change_pct > 0]
         daily_losers = [p.to_dict() for p in sorted_daily[-5:] if p.daily_change_pct < 0]
 
+        # Positions with no goal set (no target price AND no goal note), excluding watchlist
+        no_goal_count = sum(
+            1 for p in positions
+            if not p.is_watchlist
+            and not p.target_price
+            and not p.goal_note
+            and not p.retirement_hold
+        )
+
+        # Target price hits — positions where current price >= target price
+        target_hits = [
+            {**p.to_dict(), 'upside_pct': round((p.current_price - p.target_price) / p.target_price * 100, 1)}
+            for p in positions
+            if p.target_price
+            and p.current_price
+            and p.current_price >= p.target_price
+            and not p.is_watchlist
+        ]
+
         # Next group due for review
         next_group = db.session.scalar(
             select(ReviewGroup).order_by(ReviewGroup.review_by_date)
@@ -84,6 +103,8 @@ def create_app():
             'losers': losers,
             'top_gainers': top_gainers,
             'top_losers': top_losers[::-1],
+            'target_hits': target_hits,
+            'no_goal_count': no_goal_count,
             'daily_winners': daily_winners,
             'daily_losers': daily_losers[::-1],
             'next_review_group': next_group.to_dict() if next_group else None,
@@ -92,7 +113,9 @@ def create_app():
     # ── Positions ────────────────────────────────────────────────────────────
     @app.route('/api/positions', methods=['GET'])
     def list_positions():
-        positions = db.session.scalars(select(Position).order_by(Position.ticker)).all()
+        positions = db.session.scalars(
+            select(Position).where(Position.is_watchlist == False).order_by(Position.ticker)
+        ).all()
         return jsonify([p.to_dict() for p in positions])
 
     @app.route('/api/positions', methods=['POST'])
@@ -147,14 +170,22 @@ def create_app():
             p.target_price = float(data['target_price']) if data['target_price'] else None
         if 'target_date' in data:
             p.target_date = _parse_date(data['target_date'])
+        if 'retirement_hold' in data:
+            p.retirement_hold = bool(data['retirement_hold'])
         if 'goal_note' in data:
             p.goal_note = data['goal_note']
         if 'zacks_rating' in data:
             p.zacks_rating = data['zacks_rating'] or None
+        if 'zacks_notes' in data:
+            p.zacks_notes = data['zacks_notes'] or None
         if 'wsz_rating' in data:
             p.wsz_rating = data['wsz_rating'] or None
+        if 'wsz_notes' in data:
+            p.wsz_notes = data['wsz_notes'] or None
         if 'motley_fool_rating' in data:
             p.motley_fool_rating = data['motley_fool_rating'] or None
+        if 'motley_fool_notes' in data:
+            p.motley_fool_notes = data['motley_fool_notes'] or None
         db.session.commit()
         return jsonify(p.to_dict())
 
@@ -179,6 +210,46 @@ def create_app():
             db.session.add(APIUsageLog(call_type='news_refresh', ticker=p.ticker, prompt_tokens=pt, completion_tokens=ct, estimated_cost=cost))
             db.session.commit()
             return jsonify(news_update.to_dict())
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+
+    # ── Goal research ────────────────────────────────────────────────────────
+    @app.route('/api/positions/<int:pid>/research-goal', methods=['POST'])
+    def research_goal(pid):
+        p = db.session.get(Position, pid)
+        if not p:
+            return jsonify({'error': 'Not found'}), 404
+        try:
+            content, pt, ct, cost = research_goal_for_position(p)
+            db.session.add(APIUsageLog(
+                call_type='goal_research', ticker=p.ticker,
+                prompt_tokens=pt, completion_tokens=ct, estimated_cost=cost
+            ))
+            db.session.commit()
+            return jsonify({'research': content})
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+
+    # ── Position chat ─────────────────────────────────────────────────────────
+    @app.route('/api/positions/<int:pid>/chat', methods=['POST'])
+    def position_chat(pid):
+        p = db.session.get(Position, pid)
+        if not p:
+            return jsonify({'error': 'Not found'}), 404
+        data = request.get_json()
+        message = (data.get('message') or '').strip()
+        history = data.get('history', [])
+        if not message:
+            return jsonify({'error': 'No message'}), 400
+        news_update = p.latest_news()
+        try:
+            reply, pt, ct, cost = chat_about_position(p, news_update, message, history)
+            db.session.add(APIUsageLog(
+                call_type='position_chat', ticker=p.ticker,
+                prompt_tokens=pt, completion_tokens=ct, estimated_cost=cost
+            ))
+            db.session.commit()
+            return jsonify({'reply': reply})
         except Exception as e:
             return jsonify({'error': str(e)}), 500
 
@@ -227,7 +298,8 @@ def create_app():
         groups = db.session.scalars(
             select(ReviewGroup).order_by(ReviewGroup.review_by_date)
         ).all()
-        return jsonify([g.to_dict() for g in groups])
+        with_pos = request.args.get('with_positions', '0') == '1'
+        return jsonify([g.to_dict(include_positions=with_pos) for g in groups])
 
     @app.route('/api/review-groups/auto-assign', methods=['POST'])
     def auto_assign_groups():
@@ -463,60 +535,155 @@ def create_app():
     # ── CSV Import ────────────────────────────────────────────────────────────────
     @app.route('/api/positions/import-csv', methods=['POST'])
     def import_csv():
-        import csv, io
+        import csv, io, re as _re
+
         file = request.files.get('file')
         if not file:
             return jsonify({'error': 'No file uploaded'}), 400
 
         content = file.read().decode('utf-8-sig')  # utf-8-sig strips BOM
-        reader = csv.DictReader(io.StringIO(content))
+        lines = [l for l in content.splitlines() if l.strip()]
 
-        # Normalize headers
-        raw_headers = reader.fieldnames or []
+        # Schwab CSVs start with an account-info title row before the real headers.
+        # Find the actual header row — Schwab uses "Symbol" as the first column.
+        header_line_idx = 0
+        for i, line in enumerate(lines):
+            if '"Symbol"' in line or '"Ticker"' in line or line.strip().startswith('Symbol') or line.strip().startswith('Ticker'):
+                header_line_idx = i
+                break
+
+        csv_content = '\n'.join(lines[header_line_idx:])
+        reader = csv.DictReader(io.StringIO(csv_content))
+        raw_headers = [h.strip() for h in (reader.fieldnames or [])]
+
+        def clean_num(val):
+            """Strip $, commas, %, +, spaces — return bare numeric string or ''."""
+            v = (val or '').strip()
+            if v in ('N/A', '--', '-', '', 'n/a'):
+                return ''
+            return _re.sub(r'[^\d.\-]', '', v.replace(',', ''))
+
+        # ── Detect Schwab format ──────────────────────────────────────────────
+        # Schwab exports have 'Cost Basis' (total) and 'Asset Type' columns
+        schwab_markers = {'Cost Basis', 'Asset Type', 'Day Chng % (Day Change %)', 'Qty (Quantity)'}
+        is_schwab = bool(schwab_markers & set(raw_headers))
+
+        if is_schwab:
+            # Build a clean header map (strip whitespace from keys)
+            COL = {h: h for h in raw_headers}
+
+            # Schwab uses "Symbol" for the ticker column
+            ticker_col  = 'Symbol' if 'Symbol' in COL else 'Ticker'
+            shares_col  = 'Qty (Quantity)' if 'Qty (Quantity)' in COL else 'Shares'
+            price_col   = 'Price'
+            basis_col   = 'Cost Basis'
+            daychg_col  = 'Day Chng % (Day Change %)'
+            type_col    = 'Asset Type'
+
+            # Asset types to import (skip cash, bonds, totals)
+            ALLOWED_TYPES = {'Equity', 'Stock', 'ETF', 'ADR',
+                             'ETFs & Closed End Funds', 'Mutual Fund', 'Fund'}
+
+            existing_tickers = {p.ticker.upper() for p in db.session.scalars(select(Position)).all()}
+            imported, skipped, errors = [], [], []
+
+            for row in reader:
+                # Strip whitespace from all values
+                row = {k.strip(): (v or '').strip() for k, v in row.items()}
+
+                ticker = row.get(ticker_col, '').upper()
+
+                # Skip blanks, summary rows, cash rows
+                if not ticker or ticker in ('', '--'):
+                    continue
+                if 'TOTAL' in ticker or 'CASH' in ticker:
+                    continue
+                # Skip CVRs / non-standard securities (tickers starting with a digit)
+                if ticker[0].isdigit():
+                    continue
+
+                asset_type = row.get(type_col, '')
+                if asset_type and asset_type not in ALLOWED_TYPES:
+                    continue
+
+                # Skip rows with no valid price (N/A means untradeable)
+                price_str = clean_num(row.get(price_col, ''))
+                if not price_str:
+                    continue
+
+                if ticker in existing_tickers:
+                    skipped.append(ticker)
+                    continue
+
+                try:
+                    shares_str = clean_num(row.get(shares_col, ''))
+                    shares = float(shares_str) if shares_str else 0.0
+
+                    current_price_val = float(price_str)
+
+                    # Cost Basis is the TOTAL paid; divide by shares → per-share buy price
+                    cost_basis_str = clean_num(row.get(basis_col, ''))
+                    cost_basis = float(cost_basis_str) if cost_basis_str else None
+                    buy_price = round(cost_basis / shares, 4) if (cost_basis and shares) else None
+
+                    day_chg_str = clean_num(row.get(daychg_col, ''))
+                    day_chg = float(day_chg_str) if day_chg_str else None
+
+                    p = Position(
+                        ticker=ticker,
+                        shares=shares,
+                        buy_price=buy_price,
+                        current_price=current_price_val,
+                        daily_change_pct=day_chg,
+                        last_price_refresh=date.today(),
+                        is_watchlist=False,
+                    )
+                    db.session.add(p)
+                    existing_tickers.add(ticker)
+                    imported.append(ticker)
+                except Exception as ex:
+                    errors.append({'ticker': ticker, 'error': str(ex)})
+
+            db.session.commit()
+            return jsonify({'imported': imported, 'skipped': skipped, 'errors': errors, 'format': 'schwab'})
+
+        # ── Generic format fallback ───────────────────────────────────────────
         header_map = {h.strip().lower().replace(' ', '_'): h for h in raw_headers}
 
-        # Column detection helpers
         def find_col(*candidates):
             for c in candidates:
                 if c in header_map:
                     return header_map[c]
             return None
 
-        col_ticker   = find_col('ticker', 'symbol', 'stock_symbol', 'security', 'stock')
-        col_shares   = find_col('shares', 'quantity', 'qty', 'units', 'num_shares')
-        col_price    = find_col('buy_price', 'price', 'cost_basis_per_share', 'average_cost',
-                                'avg_price', 'purchase_price', 'cost_per_share', 'unit_cost')
-        col_date     = find_col('buy_date', 'date', 'purchase_date', 'acquired_date',
-                                'trade_date', 'acquisition_date')
-        col_thesis   = find_col('thesis', 'notes', 'initial_thesis', 'investment_thesis')
+        col_ticker = find_col('ticker', 'symbol', 'stock_symbol', 'security', 'stock')
+        col_shares = find_col('shares', 'quantity', 'qty', 'units', 'num_shares')
+        col_price  = find_col('buy_price', 'price', 'cost_basis_per_share', 'average_cost',
+                              'avg_price', 'purchase_price', 'cost_per_share', 'unit_cost')
+        col_date   = find_col('buy_date', 'date', 'purchase_date', 'acquired_date',
+                              'trade_date', 'acquisition_date')
+        col_thesis = find_col('thesis', 'notes', 'initial_thesis', 'investment_thesis')
 
         if not col_ticker:
             return jsonify({'error': 'Could not find a ticker/symbol column. '
-                                     'Ensure your CSV has a "ticker" or "symbol" column.'}), 400
+                                     'For Schwab exports use the standard CSV download. '
+                                     'For other brokers ensure a "ticker" or "symbol" column exists.'}), 400
 
         existing_tickers = {p.ticker.upper() for p in db.session.scalars(select(Position)).all()}
-
         imported, skipped, errors = [], [], []
 
         for row in reader:
             raw_ticker = (row.get(col_ticker) or '').strip().upper()
             if not raw_ticker:
                 continue
-
             if raw_ticker in existing_tickers:
                 skipped.append(raw_ticker)
                 continue
-
             try:
-                shares_raw = row.get(col_shares, '') if col_shares else ''
-                price_raw  = row.get(col_price, '')  if col_price  else ''
-                date_raw   = row.get(col_date, '')   if col_date   else ''
-                thesis_raw = row.get(col_thesis, '') if col_thesis else ''
-
-                # Clean numeric values (remove $, commas)
-                import re as _re
-                shares_clean = _re.sub(r'[^\d.]', '', shares_raw) if shares_raw else ''
-                price_clean  = _re.sub(r'[^\d.]', '', price_raw)  if price_raw  else ''
+                shares_clean = clean_num(row.get(col_shares, '') if col_shares else '')
+                price_clean  = clean_num(row.get(col_price,  '') if col_price  else '')
+                date_raw     = (row.get(col_date,   '') if col_date   else '').strip()
+                thesis_raw   = (row.get(col_thesis, '') if col_thesis else '').strip()
 
                 p = Position(
                     ticker=raw_ticker,
@@ -555,6 +722,50 @@ def create_app():
             'zacks_fetched': zacks is not None,
         })
 
+    # ── Watchlist ─────────────────────────────────────────────────────────────────
+    @app.route('/api/watchlist', methods=['GET'])
+    def list_watchlist():
+        items = db.session.scalars(
+            select(Position).where(Position.is_watchlist == True).order_by(Position.ticker)
+        ).all()
+        return jsonify([p.to_dict() for p in items])
+
+    @app.route('/api/watchlist', methods=['POST'])
+    def create_watchlist_item():
+        data = request.get_json()
+        p = Position(
+            ticker=data['ticker'].upper().strip(),
+            is_watchlist=True,
+            initial_thesis=data.get('initial_thesis'),
+            target_price=float(data['target_price']) if data.get('target_price') else None,
+            target_date=_parse_date(data.get('target_date')),
+            goal_note=data.get('goal_note'),
+            zacks_rating=data.get('zacks_rating') or None,
+            wsz_rating=data.get('wsz_rating') or None,
+            motley_fool_rating=data.get('motley_fool_rating') or None,
+        )
+        p.current_price, p.daily_change_pct = get_current_price(p.ticker)
+        p.last_price_refresh = date.today()
+        db.session.add(p)
+        db.session.commit()
+        return jsonify(p.to_dict()), 201
+
+    @app.route('/api/positions/<int:pid>/move-to-portfolio', methods=['POST'])
+    def move_to_portfolio(pid):
+        """Convert a watchlist item to an active position."""
+        p = db.session.get(Position, pid)
+        if not p:
+            return jsonify({'error': 'Not found'}), 404
+        data = request.get_json()
+        p.is_watchlist = False
+        p.buy_price = float(data['buy_price']) if data.get('buy_price') else None
+        p.shares = float(data.get('shares', 0))
+        p.buy_date = _parse_date(data.get('buy_date')) or date.today()
+        p.current_price, p.daily_change_pct = get_current_price(p.ticker)
+        p.last_price_refresh = date.today()
+        db.session.commit()
+        return jsonify(p.to_dict())
+
     return app
 
 
@@ -563,10 +774,15 @@ def _migrate_add_columns(app):
     """Add new columns to existing SQLite tables without dropping data."""
     new_cols = [
         ('positions', 'zacks_rating', 'VARCHAR(32)'),
+        ('positions', 'zacks_notes', 'TEXT'),
         ('positions', 'wsz_rating', 'VARCHAR(32)'),
+        ('positions', 'wsz_notes', 'TEXT'),
         ('positions', 'motley_fool_rating', 'VARCHAR(32)'),
+        ('positions', 'motley_fool_notes', 'TEXT'),
         ('positions', 'ratings_updated', 'DATETIME'),
         ('positions', 'daily_change_pct', 'FLOAT'),
+        ('positions', 'is_watchlist', 'BOOLEAN DEFAULT 0'),
+        ('positions', 'retirement_hold', 'INTEGER DEFAULT 0'),
     ]
     with app.app_context():
         with db.engine.connect() as conn:
@@ -583,36 +799,40 @@ def _build_portfolio_context(positions) -> str:
     from datetime import date as _date
     today = _date.today().isoformat()
 
-    total_cost = sum(p.cost_basis() for p in positions)
-    total_value = sum(p.market_value() for p in positions)
+    portfolio = [p for p in positions if not p.is_watchlist]
+    watchlist = [p for p in positions if p.is_watchlist]
+
+    total_cost = sum(p.cost_basis() for p in portfolio)
+    total_value = sum(p.market_value() for p in portfolio)
     total_pl = total_value - total_cost
     total_pl_pct = (total_pl / total_cost * 100) if total_cost else 0
 
     lines = [
         f"PORTFOLIO CONTEXT (as of {today})",
-        f"Total positions: {len(positions)} | "
+        f"Total positions: {len(portfolio)} | "
         f"Cost: ${total_cost:,.0f} | Value: ${total_value:,.0f} | "
         f"P/L: ${total_pl:+,.0f} ({total_pl_pct:+.1f}%)",
         "",
-        "POSITIONS (ticker | shares | cost | price | all-time P/L% | today | zacks | wsz | motley fool):",
+        "POSITIONS (ticker | shares | cost | price | all-time P/L% | today | zacks | wsz | motley fool | horizon):",
     ]
-    for p in sorted(positions, key=lambda x: x.ticker):
+    for p in sorted(portfolio, key=lambda x: x.ticker):
         daily = f"{p.daily_change_pct:+.1f}%" if p.daily_change_pct is not None else "—"
+        horizon = "RETIREMENT" if p.retirement_hold else (p.target_date.isoformat() if p.target_date else "—")
         lines.append(
             f"{p.ticker:6s} | {p.shares or 0:.1f}sh | "
             f"${p.buy_price or 0:.2f} | ${p.current_price or 0:.2f} | "
             f"{p.pl_pct():+.1f}% | {daily} | "
-            f"{p.zacks_rating or '—'} | {p.wsz_rating or '—'} | {p.motley_fool_rating or '—'}"
+            f"{p.zacks_rating or '—'} | {p.wsz_rating or '—'} | {p.motley_fool_rating or '—'} | {horizon}"
         )
 
     lines += ["", "INVESTMENT THESES:"]
-    for p in sorted(positions, key=lambda x: x.ticker):
+    for p in sorted(portfolio, key=lambda x: x.ticker):
         thesis = (p.initial_thesis or 'No thesis recorded.')[:200]
         lines.append(f"{p.ticker}: {thesis}")
 
     # Include latest news summary per position (one-liner)
     lines += ["", "LATEST NEWS REFRESH (one-liner per position):"]
-    for p in sorted(positions, key=lambda x: x.ticker):
+    for p in sorted(portfolio, key=lambda x: x.ticker):
         news = p.latest_news()
         if news and news.news_content:
             snippet = news.news_content.replace('\n', ' ')[:180]
@@ -620,7 +840,7 @@ def _build_portfolio_context(positions) -> str:
 
     # Include recent notes (last 3 per position, only if any exist)
     notes_lines = []
-    for p in sorted(positions, key=lambda x: x.ticker):
+    for p in sorted(portfolio, key=lambda x: x.ticker):
         recent_notes = sorted(p.notes, key=lambda n: n.created_at, reverse=True)[:3]
         for n in recent_notes:
             date_str = n.created_at.strftime('%Y-%m-%d') if n.created_at else '?'
@@ -628,6 +848,29 @@ def _build_portfolio_context(positions) -> str:
     if notes_lines:
         lines += ["", "QUICK NOTES (recent investor observations):"]
         lines += notes_lines
+
+    # Include analyst rating notes (only where they exist)
+    rating_note_lines = []
+    for p in sorted(portfolio, key=lambda x: x.ticker):
+        parts = []
+        if p.zacks_notes:
+            parts.append(f"Zacks: {p.zacks_notes[:120]}")
+        if p.wsz_notes:
+            parts.append(f"WSZ: {p.wsz_notes[:120]}")
+        if p.motley_fool_notes:
+            parts.append(f"MF: {p.motley_fool_notes[:120]}")
+        if parts:
+            rating_note_lines.append(f"{p.ticker} — " + " | ".join(parts))
+    if rating_note_lines:
+        lines += ["", "ANALYST RATING NOTES (investor context on ratings):"]
+        lines += rating_note_lines
+
+    if watchlist:
+        lines += ["", "WATCHLIST (stocks I'm monitoring — not yet purchased):"]
+        for p in sorted(watchlist, key=lambda x: x.ticker):
+            thesis = (p.initial_thesis or 'No thesis recorded.')[:150]
+            price_str = f"${p.current_price:.2f}" if p.current_price else "—"
+            lines.append(f"{p.ticker} | current: {price_str} | target: {'$'+str(p.target_price) if p.target_price else '—'} | {thesis}")
 
     return "\n".join(lines)
 

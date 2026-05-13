@@ -51,6 +51,48 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-8">
+
+      {/* 🎯 Target price alerts */}
+      {data.target_hits?.length > 0 && (
+        <div className="bg-amber-950/50 border border-amber-600/60 rounded-xl p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-lg">🎯</span>
+            <h2 className="text-amber-300 font-semibold text-sm">
+              {data.target_hits.length === 1
+                ? '1 position has hit its target price'
+                : `${data.target_hits.length} positions have hit their target price`}
+            </h2>
+          </div>
+          <div className="space-y-2">
+            {data.target_hits.map((p) => (
+              <div
+                key={p.id}
+                onClick={() => navigate(`/positions/${p.id}`)}
+                className="flex items-center justify-between bg-amber-900/20 hover:bg-amber-900/40 border border-amber-700/40 rounded-lg px-4 py-2.5 cursor-pointer transition-colors"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="font-mono font-bold text-white">{p.ticker}</span>
+                  <span className="text-slate-400 text-xs">
+                    Target <span className="text-amber-300">{fmt(p.target_price)}</span>
+                    {p.target_date && <span className="text-slate-500"> by {p.target_date}</span>}
+                  </span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-white text-sm font-medium">{fmt(p.current_price)}</span>
+                  <span className="text-emerald-400 text-xs font-medium">
+                    +{p.upside_pct}% above target
+                  </span>
+                  <span className="text-slate-500 text-xs">→</span>
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="text-amber-600/70 text-xs mt-3">
+            Consider reviewing your thesis and deciding whether to trim, hold, or set a new target.
+          </p>
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-white">Portfolio Overview</h1>
         <button
@@ -73,6 +115,20 @@ export default function Dashboard() {
           color={plColor}
         />
       </div>
+
+      {/* No-goal nudge */}
+      {data.no_goal_count > 0 && (
+        <div
+          onClick={() => navigate('/positions')}
+          className="flex items-center gap-3 px-4 py-3 bg-slate-800/60 border border-dashed border-slate-600 rounded-xl cursor-pointer hover:border-slate-500 transition-colors"
+        >
+          <span className="text-slate-400">📋</span>
+          <p className="text-slate-400 text-sm flex-1">
+            <span className="text-white font-medium">{data.no_goal_count} position{data.no_goal_count !== 1 ? 's' : ''}</span> {data.no_goal_count !== 1 ? 'have' : 'has'} no goal or target price set.
+          </p>
+          <span className="text-indigo-400 text-xs">View positions →</span>
+        </div>
+      )}
 
       {/* Win/loss + Next review */}
       <div className="grid grid-cols-2 gap-4">
